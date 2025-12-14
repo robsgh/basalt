@@ -3,27 +3,24 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::symbols::border;
 use ratatui::widgets::Block;
 use ratatui::widgets::List;
-use ratatui::widgets::ListItem;
-use ratatui::widgets::ListState;
 use ratatui::widgets::Padding;
 use ratatui::{DefaultTerminal, prelude::*};
 
-#[derive(Debug, Default)]
-pub(crate) struct BasaltInterface {
-    files: Vec<&'static str>,
-    file_list_state: ListState,
-    exit: bool,
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd)]
+pub enum BasaltState {
+    #[default]
+    Init,
+    Running,
+    Exiting,
 }
 
-impl BasaltInterface {
-    pub fn run(&mut self) -> Result<()> {
-        self.files = vec![
-            "file 1",
-            "file 2",
-            "/usr/bin/sqlite3",
-            "/home/rob/Desktop/steam.desktop",
-        ];
+#[derive(Debug, Default, Clone)]
+pub struct BasaltApp {
+    state: BasaltState,
+}
 
+impl BasaltApp {
+    pub fn run(&mut self) -> Result<()> {
         let mut terminal = ratatui::init();
         let res = self.ui_loop(&mut terminal);
         ratatui::restore();
@@ -32,7 +29,7 @@ impl BasaltInterface {
     }
 
     fn ui_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        while !self.exit {
+        while self.state != BasaltState::Exiting {
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
         }
@@ -49,15 +46,17 @@ impl BasaltInterface {
             .border_set(border::THICK);
 
         let files = List::new(
-            self.files
-                .iter()
-                .map(|s| ListItem::new(*s))
-                .collect::<Vec<ListItem>>(),
+            // self.files
+            //     .iter()
+            //     .map(|s| ListItem::new(*s))
+            //     .collect::<Vec<ListItem>>(),
+            ["file 1", "file 2", "file 3"],
         )
         .block(block)
-        .highlight_style(Style::new().bold().reversed().on_blue());
+        .highlight_style(Style::new().bold().black().on_white());
 
-        frame.render_stateful_widget(files, frame.area(), &mut self.file_list_state);
+        // frame.render_stateful_widget(files, frame.area(), &mut self.file_list_state);
+        frame.render_widget(files, frame.area());
     }
 
     fn handle_events(&mut self) -> Result<()> {
@@ -74,22 +73,22 @@ impl BasaltInterface {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Char('q') | KeyCode::Esc => {
-                self.exit = true;
+                self.state = BasaltState::Exiting;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                if self.file_list_state.selected().is_none() {
-                    self.file_list_state.select_first();
-                } else {
-                    self.file_list_state.select_next();
-                }
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if self.file_list_state.selected().is_none() {
-                    self.file_list_state.select_last();
-                } else {
-                    self.file_list_state.select_previous();
-                }
-            }
+            // KeyCode::Char('j') | KeyCode::Down => {
+            //     if self.file_list_state.selected().is_none() {
+            //         self.file_list_state.select_first();
+            //     } else {
+            //         self.file_list_state.select_next();
+            //     }
+            // }
+            // KeyCode::Char('k') | KeyCode::Up => {
+            //     if self.file_list_state.selected().is_none() {
+            //         self.file_list_state.select_last();
+            //     } else {
+            //         self.file_list_state.select_previous();
+            //     }
+            // }
             _ => {}
         }
     }
@@ -127,10 +126,10 @@ mod tests {
 
     #[test]
     fn test_handle_key_event() -> Result<()> {
-        let mut app = BasaltInterface::default();
+        let mut app = BasaltApp::default();
 
         app.handle_key_event(KeyCode::Char('q').into());
-        assert!(app.exit);
+        assert_eq!(app.state, BasaltState::Exiting);
 
         Ok(())
     }
