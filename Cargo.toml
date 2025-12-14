@@ -1,0 +1,13 @@
+[package]
+name = "basalt"
+version = "0.1.0"
+edition = "2024"
+description = "An open and aesthetic TUI note taking application"
+authors = ["Rob Schmidt <rob@schminfra.net>"]
+keywords = ["notes", "tui", "note taking", "aesthetic"]
+
+[dependencies]
+anyhow = "1.0.100"
+crossterm = "0.29.0"
+directories = "6.0.0"
+ratatui = "0.29.0"
