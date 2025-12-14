@@ -1,5 +1,11 @@
+use std::fs;
+
+use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use directories::ProjectDirs;
+use log::info;
 use ratatui::symbols::border;
 use ratatui::widgets::Block;
 use ratatui::widgets::List;
@@ -30,16 +36,36 @@ pub struct BasaltApp {
 
 impl BasaltApp {
     pub fn run(&mut self) -> Result<()> {
-        self.data.files = vec!["file 1", "file 2", "file 3"];
+        if self.state == BasaltState::Init {
+            let dirs = ProjectDirs::from("com", "Schminfra", "Basalt")
+                .context("failed to create project directory for basalt")?;
+
+            match fs::exists(dirs.data_dir()) {
+                Ok(false) => {
+                    info!(
+                        "Creating basalt data directory at {}",
+                        dirs.data_dir().to_string_lossy()
+                    );
+                    fs::create_dir_all(dirs.data_dir()).with_context(|| {
+                        format!(
+                            "failed to create basalt data directory at {}",
+                            dirs.data_dir().to_string_lossy()
+                        )
+                    })?;
+                }
+                Ok(true) => info!("Basalt data directory exists, reusing it"),
+                Err(e) => bail!(e),
+            }
+        }
 
         let mut terminal = ratatui::init();
-        let res = self.ui_loop(&mut terminal);
+        let res = self.tui_loop(&mut terminal);
         ratatui::restore();
 
         res
     }
 
-    fn ui_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+    fn tui_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         while self.state != BasaltState::Exiting {
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
