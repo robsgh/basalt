@@ -1,17 +1,22 @@
 use std::fs;
+use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
 use anyhow::bail;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use directories::ProjectDirs;
 use log::info;
 use ratatui::symbols::border;
 use ratatui::widgets::Block;
+use ratatui::widgets::Borders;
 use ratatui::widgets::List;
 use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
 use ratatui::widgets::Padding;
+use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, prelude::*};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd)]
@@ -24,7 +29,7 @@ pub enum BasaltState {
 
 #[derive(Debug, Default, Clone)]
 struct BasaltData {
-    files: Vec<&'static str>,
+    files: Vec<PathBuf>,
     list_state: ListState,
 }
 
@@ -32,30 +37,50 @@ struct BasaltData {
 pub struct BasaltApp {
     state: BasaltState,
     data: BasaltData,
+    data_path: PathBuf,
 }
 
 impl BasaltApp {
+    fn create_new_dirs(&self, dirs: &ProjectDirs) -> Result<()> {
+        info!(
+            "Creating basalt data directory at {}",
+            dirs.data_dir().to_string_lossy()
+        );
+        fs::create_dir_all(dirs.data_dir()).with_context(|| {
+            format!(
+                "failed to create basalt data directory at {}",
+                dirs.data_dir().to_string_lossy()
+            )
+        })?;
+
+        Ok(())
+    }
+
+    fn load_from_dirs(&self, dirs: &ProjectDirs) -> Result<Vec<PathBuf>> {
+        info!("Basalt data directory exists, reusing it");
+
+        let files = fs::read_dir(dirs.data_dir())?
+            .filter_map(|d| d.ok().map(|entry| entry.path()))
+            .collect();
+
+        Ok(files)
+    }
+
     pub fn run(&mut self) -> Result<()> {
         if self.state == BasaltState::Init {
             let dirs = ProjectDirs::from("com", "Schminfra", "Basalt")
                 .context("failed to create project directory for basalt")?;
 
             match fs::exists(dirs.data_dir()) {
-                Ok(false) => {
-                    info!(
-                        "Creating basalt data directory at {}",
-                        dirs.data_dir().to_string_lossy()
-                    );
-                    fs::create_dir_all(dirs.data_dir()).with_context(|| {
-                        format!(
-                            "failed to create basalt data directory at {}",
-                            dirs.data_dir().to_string_lossy()
-                        )
-                    })?;
+                Ok(false) => self.create_new_dirs(&dirs)?,
+                Ok(true) => {
+                    let files = self.load_from_dirs(&dirs)?;
+                    self.data.files = files;
                 }
-                Ok(true) => info!("Basalt data directory exists, reusing it"),
-                Err(e) => bail!(e),
-            }
+                Err(e) => bail!("failed to stat basalt data dir: {:?}", e),
+            };
+
+            self.data_path = dirs.data_dir().to_owned();
         }
 
         let mut terminal = ratatui::init();
@@ -75,18 +100,52 @@ impl BasaltApp {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let title = Line::from(" Basalt ".bold());
+        let [left_nav_area, main_area, right_bar_area] = Layout::horizontal([
+            Constraint::Percentage(10),
+            Constraint::Percentage(80),
+            Constraint::Percentage(10),
+        ])
+        .areas::<3>(frame.area());
 
-        let block = Block::bordered()
-            .title(title.centered())
-            .padding(Padding::uniform(1))
-            .border_set(border::THICK);
+        let left_nav_block = Block::new()
+            .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
+            .title_alignment(Alignment::Center)
+            .title_style(Style::new().bold())
+            .title("Left Nav");
+        let main_block = Block::bordered()
+            .title_alignment(Alignment::Center)
+            .title("Basalt");
+        let right_block = Block::new()
+            .borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM)
+            .title_alignment(Alignment::Center)
+            .title_style(Style::new().bold())
+            .title("Todo");
 
-        let files = List::new(self.data.files.iter().map(|s| ListItem::from(*s)))
-            .block(block)
-            .highlight_style(Style::new().bold().black().on_white());
+        let files = List::new(
+            self.data
+                .files
+                .iter()
+                .filter_map(|pb| {
+                    pb.strip_prefix(&self.data_path)
+                        .ok()
+                        .map(|p| p.to_string_lossy())
+                })
+                .map(|f| ListItem::from(f)),
+        )
+        .block(left_nav_block)
+        .highlight_style(Style::new().bold().black().on_white());
+        frame.render_stateful_widget(files, left_nav_area, &mut self.data.list_state);
 
-        frame.render_stateful_widget(files, frame.area(), &mut self.data.list_state);
+        let main = Paragraph::new("This is the main content. There are many like it, but this one is hastily created and mine.").centered().block(main_block);
+        frame.render_widget(main, main_area);
+
+        let right_bar = List::new(vec![
+            ListItem::from("[ ] Todo 1"),
+            ListItem::from("[ ] Todo 2"),
+            ListItem::from("[ ] Todo 3"),
+        ])
+        .block(right_block);
+        frame.render_widget(right_bar, right_bar_area);
     }
 
     fn handle_events(&mut self) -> Result<()> {
