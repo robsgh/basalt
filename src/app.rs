@@ -222,6 +222,10 @@ impl BasaltApp {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashSet, fs::File};
+
+    use tempfile::tempdir;
+
     use super::*;
 
     #[test]
@@ -258,6 +262,37 @@ mod tests {
         let last_idx = app.data.list_state.selected();
         app.handle_key_event(KeyCode::Char('j').into());
         assert_eq!(app.data.list_state.selected(), last_idx);
+
+        Ok(())
+    }
+
+    #[test]
+    fn handle_file_update() -> Result<()> {
+        let dir = tempdir()?;
+        let mut files = vec!["1.md", "2.md", "3.md"];
+        for f in &files {
+            File::create(dir.path().join(f))?;
+        }
+        fs::create_dir(dir.path().join("folder1"))?;
+        File::create(dir.path().join("folder1/1.md"))?;
+
+        let mut app = BasaltApp::default();
+        app.data_path = dir.path().to_path_buf();
+
+        app.handle_key_event(KeyCode::Char('r').into());
+
+        drop(dir);
+
+        files.push("folder1");
+        assert_eq!(
+            app.data
+                .files
+                .into_iter()
+                .map(|p| p.strip_prefix(&app.data_path).unwrap().to_owned())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect::<HashSet<_>>(),
+            files.into_iter().map(String::from).collect::<HashSet<_>>()
+        );
 
         Ok(())
     }
