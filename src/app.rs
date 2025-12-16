@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -31,6 +32,8 @@ pub enum BasaltState {
 struct BasaltData {
     files: Vec<PathBuf>,
     list_state: ListState,
+    current_file: Option<PathBuf>,
+    current_file_contents: Option<String>,
 }
 
 /// The main Basalt Application
@@ -38,7 +41,7 @@ struct BasaltData {
 pub struct BasaltApp {
     state: BasaltState,
     data: BasaltData,
-    data_path: PathBuf,
+    current_dir: PathBuf,
 }
 
 impl BasaltApp {
@@ -79,14 +82,14 @@ impl BasaltApp {
         if self.state == BasaltState::Init {
             let dirs = ProjectDirs::from("com", "Schminfra", "Basalt")
                 .context("failed to create project directory for basalt")?;
-            self.data_path = dirs.data_dir().to_path_buf();
+            self.current_dir = dirs.data_dir().to_path_buf();
 
             // TODO: Instead of just creating a dir and putting files in it, we should group dirs
             // and consider each subdir as a single top-level note bundle
-            match fs::exists(&self.data_path) {
-                Ok(false) => self.create_new_dir(&self.data_path)?,
+            match fs::exists(&self.current_dir) {
+                Ok(false) => self.create_new_dir(&self.current_dir)?,
                 Ok(true) => {
-                    let files = self.load_from_dir(&self.data_path)?;
+                    let files = self.load_from_dir(&self.current_dir)?;
                     self.data.files = files;
                 }
                 Err(e) => bail!("failed to stat basalt data dir: {:?}", e),
@@ -112,6 +115,16 @@ impl BasaltApp {
         }
 
         Ok(())
+    }
+
+    /// Read the contents of a file and return a string that contains it all
+    ///
+    /// This method returns a string with an error message if reading the file failed.
+    fn read_file_contents(&self, path: &Path) -> String {
+        match fs::read_to_string(path) {
+            Ok(f) => f,
+            Err(e) => format!("Error reading file: {e:?}"),
+        }
     }
 
     /// Organize the immediate mode TUI layout and present it to the screen
@@ -142,7 +155,7 @@ impl BasaltApp {
                 .files
                 .iter()
                 .filter_map(|pb| {
-                    pb.strip_prefix(&self.data_path)
+                    pb.strip_prefix(&self.current_dir)
                         .ok()
                         .map(|p| p.to_string_lossy())
                 })
@@ -152,7 +165,16 @@ impl BasaltApp {
         .highlight_style(Style::new().bold().black().on_white());
         frame.render_stateful_widget(files, left_nav_area, &mut self.data.list_state);
 
-        let main = Paragraph::new("This is the main content. There are many like it, but this one is hastily created and mine.").centered().block(main_block);
+        let main_contents = match &self.data.current_file {
+            None => "No file selected.",
+            Some(file_path) => {
+                if self.data.current_file_contents.is_none() {
+                    self.data.current_file_contents = Some(self.read_file_contents(&file_path));
+                }
+                self.data.current_file_contents.as_deref().unwrap()
+            }
+        };
+        let main = Paragraph::new(main_contents).centered().block(main_block);
         frame.render_widget(main, main_area);
 
         let right_bar = List::new(vec![
@@ -177,7 +199,7 @@ impl BasaltApp {
 
     /// Refresh the list of files shown in the TUI
     fn refresh_file_list(&mut self) {
-        match self.load_from_dir(&self.data_path) {
+        match self.load_from_dir(&self.current_dir) {
             Ok(files) => {
                 debug!("refreshed file list: {:?}", files);
                 self.data.files = files;
@@ -185,11 +207,51 @@ impl BasaltApp {
             Err(e) => {
                 error!(
                     "failed to load files in directory {:?}: {:?}",
-                    self.data_path.to_string_lossy(),
+                    self.current_dir.to_string_lossy(),
                     e
                 );
             }
         };
+    }
+
+    /// Set the current file in the data model and invalidate the stored current file contents
+    fn set_current_file(&mut self, path_buf: PathBuf) {
+        self.data.current_file = Some(path_buf);
+        self.data.current_file_contents = None;
+    }
+
+    /// Select the next file in the file list and update the data model's contents to ensure that
+    /// the file is loaded on next render
+    fn select_next_file(&mut self) {
+        if self.data.list_state.selected().is_none() {
+            self.data.list_state.select_first();
+        } else {
+            self.data.list_state.select_next();
+        }
+
+        if let Some(idx) = self.data.list_state.selected() {
+            let path_buf = self.data.files.get(idx).cloned();
+            if path_buf.is_none() {
+                return;
+            }
+
+            self.set_current_file(path_buf.unwrap());
+        }
+    }
+
+    /// Select the previous file in the file list and update the data model's contents to ensure
+    /// that the file is loaded on next render
+    fn select_prev_file(&mut self) {
+        if self.data.list_state.selected().is_none() {
+            self.data.list_state.select_last();
+        } else {
+            self.data.list_state.select_previous();
+        }
+
+        if let Some(idx) = self.data.list_state.selected() {
+            self.data.current_file = Some(self.data.files[idx].clone());
+            self.data.current_file_contents = None;
+        }
     }
 
     /// Handle keyboard events from the terminal
@@ -199,18 +261,10 @@ impl BasaltApp {
                 self.state = BasaltState::Exiting;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.data.list_state.selected().is_none() {
-                    self.data.list_state.select_first();
-                } else {
-                    self.data.list_state.select_next();
-                }
+                self.select_next_file();
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if self.data.list_state.selected().is_none() {
-                    self.data.list_state.select_last();
-                } else {
-                    self.data.list_state.select_previous();
-                }
+                self.select_prev_file();
             }
             KeyCode::Char('r') => {
                 self.refresh_file_list();
@@ -277,7 +331,7 @@ mod tests {
         File::create(dir.path().join("folder1/1.md"))?;
 
         let mut app = BasaltApp::default();
-        app.data_path = dir.path().to_path_buf();
+        app.current_dir = dir.path().to_path_buf();
 
         app.handle_key_event(KeyCode::Char('r').into());
 
@@ -288,11 +342,43 @@ mod tests {
             app.data
                 .files
                 .into_iter()
-                .map(|p| p.strip_prefix(&app.data_path).unwrap().to_owned())
+                .map(|p| p.strip_prefix(&app.current_dir).unwrap().to_owned())
                 .map(|p| p.to_string_lossy().to_string())
                 .collect::<HashSet<_>>(),
             files.into_iter().map(String::from).collect::<HashSet<_>>()
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn handle_read_file() -> Result<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("test.md");
+        let test_file_content = "this is a test file";
+
+        File::create(&file_path)?;
+        fs::write(&file_path, test_file_content)?;
+
+        let mut app = BasaltApp::default();
+        app.current_dir = dir.path().to_path_buf();
+        let s = app.read_file_contents(&file_path);
+
+        assert_eq!(&s, test_file_content);
+
+        Ok(())
+    }
+
+    #[test]
+    fn handle_read_file_has_error_when_file_does_not_exist() -> Result<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("test.md");
+
+        let mut app = BasaltApp::default();
+        app.current_dir = dir.path().to_path_buf();
+        let s = app.read_file_contents(&file_path);
+
+        assert!(s.contains("Error reading file"));
 
         Ok(())
     }
