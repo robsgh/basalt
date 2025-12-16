@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_file_list_nav() -> Result<()> {
         let mut app = BasaltApp::default();
-        app.data.files = vec!["1", "2", "3"];
+        app.data.files = vec!["1", "2", "3"].into_iter().map(PathBuf::from).collect();
 
         assert_eq!(app.data.list_state.selected(), None);
 
