@@ -1,24 +1,23 @@
 use std::fs;
-use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::anyhow;
 use anyhow::bail;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use directories::ProjectDirs;
+use log::debug;
+use log::error;
 use log::info;
-use ratatui::symbols::border;
 use ratatui::widgets::Block;
 use ratatui::widgets::Borders;
 use ratatui::widgets::List;
 use ratatui::widgets::ListItem;
 use ratatui::widgets::ListState;
-use ratatui::widgets::Padding;
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, prelude::*};
 
+/// State of the Basalt application
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum BasaltState {
     #[default]
@@ -27,12 +26,14 @@ pub enum BasaltState {
     Exiting,
 }
 
+/// Data model used by the Basalt application
 #[derive(Debug, Default, Clone)]
 struct BasaltData {
     files: Vec<PathBuf>,
     list_state: ListState,
 }
 
+/// The main Basalt Application
 #[derive(Debug, Default, Clone)]
 pub struct BasaltApp {
     state: BasaltState,
@@ -41,46 +42,55 @@ pub struct BasaltApp {
 }
 
 impl BasaltApp {
-    fn create_new_dirs(&self, dirs: &ProjectDirs) -> Result<()> {
+    /// Create a new directory for the Basalt project data
+    fn create_new_dir(&self, dir: &PathBuf) -> Result<()> {
         info!(
             "Creating basalt data directory at {}",
-            dirs.data_dir().to_string_lossy()
+            dir.to_string_lossy()
         );
-        fs::create_dir_all(dirs.data_dir()).with_context(|| {
+        fs::create_dir_all(dir).with_context(|| {
             format!(
                 "failed to create basalt data directory at {}",
-                dirs.data_dir().to_string_lossy()
+                dir.to_string_lossy()
             )
         })?;
 
         Ok(())
     }
 
-    fn load_from_dirs(&self, dirs: &ProjectDirs) -> Result<Vec<PathBuf>> {
+    /// Load `self.files` from a directory
+    fn load_from_dir(&self, dir: &PathBuf) -> Result<Vec<PathBuf>> {
         info!("Basalt data directory exists, reusing it");
 
-        let files = fs::read_dir(dirs.data_dir())?
+        let files = fs::read_dir(dir)?
             .filter_map(|d| d.ok().map(|entry| entry.path()))
             .collect();
 
         Ok(files)
     }
 
+    /// Begin the application
+    ///
+    /// The application will beign in the [`BasaltState::Init`] state which will initialize the
+    /// project directories as needed. Then, the terminal will be configured for the TUI
+    /// application and the app will enter [`BasaltState::Running`]. Upon exit, the state will
+    /// change to [`BasaltState::Exiting`] and the program will restore the terminal session.
     pub fn run(&mut self) -> Result<()> {
         if self.state == BasaltState::Init {
             let dirs = ProjectDirs::from("com", "Schminfra", "Basalt")
                 .context("failed to create project directory for basalt")?;
+            self.data_path = dirs.data_dir().to_path_buf();
 
-            match fs::exists(dirs.data_dir()) {
-                Ok(false) => self.create_new_dirs(&dirs)?,
+            // TODO: Instead of just creating a dir and putting files in it, we should group dirs
+            // and consider each subdir as a single top-level note bundle
+            match fs::exists(&self.data_path) {
+                Ok(false) => self.create_new_dir(&self.data_path)?,
                 Ok(true) => {
-                    let files = self.load_from_dirs(&dirs)?;
+                    let files = self.load_from_dir(&self.data_path)?;
                     self.data.files = files;
                 }
                 Err(e) => bail!("failed to stat basalt data dir: {:?}", e),
             };
-
-            self.data_path = dirs.data_dir().to_owned();
         }
 
         let mut terminal = ratatui::init();
@@ -90,7 +100,12 @@ impl BasaltApp {
         res
     }
 
+    /// Continuously draw and update the screen while the TUI is running. This will loop
+    /// forever as long as `self.state` is not equal to [`BasaltState::Exiting`].
     fn tui_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        info!("Entering running state");
+        self.state = BasaltState::Running;
+
         while self.state != BasaltState::Exiting {
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
@@ -99,6 +114,7 @@ impl BasaltApp {
         Ok(())
     }
 
+    /// Organize the immediate mode TUI layout and present it to the screen
     fn draw(&mut self, frame: &mut Frame) {
         let [left_nav_area, main_area, right_bar_area] = Layout::horizontal([
             Constraint::Percentage(10),
@@ -159,6 +175,24 @@ impl BasaltApp {
         Ok(())
     }
 
+    /// Refresh the list of files shown in the TUI
+    fn refresh_file_list(&mut self) {
+        match self.load_from_dir(&self.data_path) {
+            Ok(files) => {
+                debug!("refreshed file list: {:?}", files);
+                self.data.files = files;
+            }
+            Err(e) => {
+                error!(
+                    "failed to load files in directory {:?}: {:?}",
+                    self.data_path.to_string_lossy(),
+                    e
+                );
+            }
+        };
+    }
+
+    /// Handle keyboard events from the terminal
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Char('q') | KeyCode::Esc => {
@@ -177,6 +211,9 @@ impl BasaltApp {
                 } else {
                     self.data.list_state.select_previous();
                 }
+            }
+            KeyCode::Char('r') => {
+                self.refresh_file_list();
             }
             _ => {}
         }
