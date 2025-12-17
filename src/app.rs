@@ -129,26 +129,24 @@ impl BasaltApp {
 
     /// Organize the immediate mode TUI layout and present it to the screen
     fn draw(&mut self, frame: &mut Frame) {
-        let [left_nav_area, main_area, right_bar_area] = Layout::horizontal([
-            Constraint::Percentage(10),
-            Constraint::Percentage(80),
-            Constraint::Percentage(10),
-        ])
-        .areas::<3>(frame.area());
+        let [left_chunk, main_chunk] =
+            Layout::horizontal([Constraint::Length(35), Constraint::Fill(2)]).areas(frame.area());
+        let [nav_chunk, todo_chunk] =
+            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .areas(left_chunk);
 
-        let left_nav_block = Block::new()
-            .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
+        let nav_block = Block::bordered()
             .title_alignment(Alignment::Center)
             .title_style(Style::new().bold())
             .title("Left Nav");
-        let main_block = Block::bordered()
-            .title_alignment(Alignment::Center)
-            .title("Basalt");
-        let right_block = Block::new()
-            .borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM)
+        let todo_block = Block::bordered()
             .title_alignment(Alignment::Center)
             .title_style(Style::new().bold())
             .title("Todo");
+
+        let main_block = Block::bordered()
+            .title_alignment(Alignment::Center)
+            .title("Basalt");
 
         let files = List::new(
             self.data
@@ -161,9 +159,9 @@ impl BasaltApp {
                 })
                 .map(|f| ListItem::from(f)),
         )
-        .block(left_nav_block)
+        .block(nav_block)
         .highlight_style(Style::new().bold().black().on_white());
-        frame.render_stateful_widget(files, left_nav_area, &mut self.data.list_state);
+        frame.render_stateful_widget(files, nav_chunk, &mut self.data.list_state);
 
         let main_contents = match &self.data.current_file {
             None => "No file selected.",
@@ -175,15 +173,15 @@ impl BasaltApp {
             }
         };
         let main = Paragraph::new(main_contents).centered().block(main_block);
-        frame.render_widget(main, main_area);
+        frame.render_widget(main, main_chunk);
 
         let right_bar = List::new(vec![
             ListItem::from("[ ] Todo 1"),
             ListItem::from("[ ] Todo 2"),
             ListItem::from("[ ] Todo 3"),
         ])
-        .block(right_block);
-        frame.render_widget(right_bar, right_bar_area);
+        .block(todo_block);
+        frame.render_widget(right_bar, todo_chunk);
     }
 
     fn handle_events(&mut self) -> Result<()> {
