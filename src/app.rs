@@ -96,6 +96,9 @@ impl BasaltApp {
             };
         }
 
+        info!("Entering running state");
+        self.state = BasaltState::Running;
+
         let mut terminal = ratatui::init();
         let res = self.tui_loop(&mut terminal);
         ratatui::restore();
@@ -106,9 +109,6 @@ impl BasaltApp {
     /// Continuously draw and update the screen while the TUI is running. This will loop
     /// forever as long as `self.state` is not equal to [`BasaltState::Exiting`].
     fn tui_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        info!("Entering running state");
-        self.state = BasaltState::Running;
-
         while self.state != BasaltState::Exiting {
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
