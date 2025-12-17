@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use std::{
     borrow::Cow,
-    fs,
+    fs::{self, File},
     path::{Path, PathBuf},
 };
 
@@ -24,6 +24,12 @@ impl Note {
     ///
     /// This will reload the note from disk even if `self.content` is already `Some(_)`
     pub fn load(&mut self) -> Result<()> {
+        if fs::metadata(&self.path).is_ok_and(|m| m.is_dir()) {
+            bail!(
+                "cannot load directory {} as a note",
+                self.path.to_string_lossy()
+            );
+        }
         let c = fs::read_to_string(&self.path).with_context(|| {
             format!(
                 "failed to read note in bundle at {}",

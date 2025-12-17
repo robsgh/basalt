@@ -123,9 +123,9 @@ impl BasaltApp {
             Some(idx) => {
                 if let Some(n) = self.bundle.get_note(*idx) {
                     main_block = main_block.title_top(n.name());
-                    n.get().unwrap()
+                    n.get().unwrap_or("<<error loading file>>")
                 } else {
-                    "<<error loading file>>"
+                    "<<file index not found?>>"
                 }
             }
         };
